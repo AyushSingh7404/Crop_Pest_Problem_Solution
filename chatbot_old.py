@@ -155,98 +155,72 @@ class PesticideChatbot:
         except Exception as e:
             logger.error(f"Semantic search error: {str(e)}")
             return []
-        
+    
     def detect_intent(self, query: str, session: SessionState) -> Dict[str, Any]:
         """
         Use LLM to detect user intent with full context
         """
         system_prompt = """You are an intent classifier for a pesticide recommendation chatbot.
 
-    Classify the user's intent and extract any mentioned entities.
+Classify the user's intent and extract any mentioned entities.
 
-    Return ONLY a valid JSON object with this exact structure:
-    {
-    "intent_type": "provide_info | uncertainty | denial | confirmation | question | greeting | farewell | off_topic | unclear",
-    "entities": {
-        "crop": "extracted crop name or null",
-        "pest_name": "extracted pest/disease name or null",
-        "application_type": "extracted application method or null"
-    },
-    "uncertain_about": "crop | pest_name | application_type | null",
-    "reasoning": "brief explanation",
-    "confidence": "high | medium | low"
-    }
+Return ONLY a valid JSON object with this exact structure:
+{
+  "intent_type": "provide_info | uncertainty | denial | confirmation | question | greeting | off_topic",
+  "entities": {
+    "crop": "extracted crop name or null",
+    "pest_name": "extracted pest/disease name or null",
+    "application_type": "extracted application method or null"
+  },
+  "uncertain_about": "crop | pest_name | application_type | null",
+  "reasoning": "brief explanation"
+}
 
-    Intent Types:
-    - provide_info: User provides crop/pest/application details
-    - uncertainty: User says "don't know", "not sure", "show all", etc.
-    - denial: User says "no", "not that", etc.
-    - confirmation: User says "yes", "correct", "that's right", etc. (ONLY when genuinely confirming, NOT for acknowledgments)
-    - question: User asks a RELEVANT question about pesticides, dosage, application methods
-    - greeting: Hi, hello, how are you, etc. (initial contact)
-    - farewell: Thanks, bye, got it, that's all, ok thanks, thank you, etc. (closing/acknowledgment)
-    - off_topic: Request is clearly outside pesticide/crop domain (fertilizers, weather, prices, unrelated topics)
-    - unclear: Cannot confidently determine intent OR message is too ambiguous/vague
+Intent Types:
+- provide_info: User provides crop/pest/application details
+- uncertainty: User says "don't know", "not sure", "show all", etc.
+- denial: User says "no", "not that", etc.
+- confirmation: User says "yes", "correct", "that's right", etc.
+- question: User asks a general question
+- greeting: Hi, hello, thanks, etc.
+- off_topic: Outside pesticide domain
 
-    IMPORTANT: 
-    - Use "unclear" if confidence is LOW or message doesn't make sense
-    - Use "off_topic" if request is clear but NOT about pesticide recommendations
-    - Use "question" ONLY for legitimate pesticide-related questions
+Examples:
 
-    Examples:
+User: "grapes powdery mildew"
+{"intent_type": "provide_info", "entities": {"crop": "grapes", "pest_name": "powdery mildew", "application_type": null}}
 
-    User: "grapes powdery mildew"
-    {"intent_type": "provide_info", "entities": {"crop": "grapes", "pest_name": "powdery mildew", "application_type": null}, "uncertain_about": null, "reasoning": "user provided crop and pest", "confidence": "high"}
+User: "I don't know which pest it is"
+{"intent_type": "uncertainty", "uncertain_about": "pest_name", "entities": {}}
 
-    User: "I don't know which pest it is"
-    {"intent_type": "uncertainty", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": "pest_name", "confidence": "high"}
+User: "no"
+{"intent_type": "denial", "entities": {}}
 
-    User: "no"
-    {"intent_type": "denial", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "confidence": "medium"}
+User: "yes"
+{"intent_type": "confirmation", "entities": {}}
 
-    User: "yes, that's correct"
-    {"intent_type": "confirmation", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "confidence": "high"}
+User: "hello"
+{"intent_type": "greeting", "entities": {}}
 
-    User: "hello"
-    {"intent_type": "greeting", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "greeting message", "confidence": "high"}
-
-    User: "ok thanks"
-    {"intent_type": "farewell", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "acknowledgment/closing", "confidence": "high"}
-
-    User: "what's the best pesticide for aphids?"
-    {"intent_type": "question", "entities": {"crop": null, "pest_name": "aphids", "application_type": null}, "uncertain_about": null, "confidence": "high"}
-
-    User: "how much does this cost?"
-    {"intent_type": "off_topic", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "pricing not in scope", "confidence": "high"}
-
-    User: "tell me about fertilizers"
-    {"intent_type": "off_topic", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "fertilizers not pesticides", "confidence": "high"}
-
-    User: "asdfghjkl"
-    {"intent_type": "unclear", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "gibberish input", "confidence": "low"}
-
-    User: "can you help"
-    {"intent_type": "unclear", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "too vague, needs clarification", "confidence": "low"}
-
-    User: "foliar spray"
-    {"intent_type": "provide_info", "entities": {"crop": null, "pest_name": null, "application_type": "foliar spray"}, "uncertain_about": null, "confidence": "medium"}"""
+User: "foliar spray"
+{"intent_type": "provide_info", "entities": {"application_type": "foliar spray"}}"""
 
         history = session.get_history_for_llm(max_messages=4)
         last_bot_msg = session.get_last_bot_message()
         
         user_prompt = f"""Conversation History:
-    {history if history else 'No previous messages'}
+{history if history else 'No previous messages'}
 
-    Last Bot Message: {last_bot_msg if last_bot_msg else 'None'}
+Last Bot Message: {last_bot_msg if last_bot_msg else 'None'}
 
-    Current Session State:
-    - Crop: {session.crop or 'Unknown'}
-    - Pest: {session.pest_name or 'Unknown'}
-    - Application: {session.application_type or 'Unknown'}
+Current Session State:
+- Crop: {session.crop or 'Unknown'}
+- Pest: {session.pest_name or 'Unknown'}
+- Application: {session.application_type or 'Unknown'}
 
-    User's New Message: "{query}"
+User's New Message: "{query}"
 
-    Classify this message and extract entities. Return only the JSON object."""
+Classify this message and extract entities. Return only the JSON object."""
 
         try:
             body = json.dumps({
@@ -273,57 +247,23 @@ class PesticideChatbot:
             # Extract JSON (handle markdown code blocks)
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
-                parsed_intent = json.loads(json_match.group(0))
-                
-                # CRITICAL FIX: Ensure all required fields exist with defaults
-                if 'entities' not in parsed_intent:
-                    parsed_intent['entities'] = {}
-                
-                # Ensure entities dict has all required keys
-                if 'crop' not in parsed_intent['entities']:
-                    parsed_intent['entities']['crop'] = None
-                if 'pest_name' not in parsed_intent['entities']:
-                    parsed_intent['entities']['pest_name'] = None
-                if 'application_type' not in parsed_intent['entities']:
-                    parsed_intent['entities']['application_type'] = None
-                
-                # Ensure other required fields exist
-                if 'uncertain_about' not in parsed_intent:
-                    parsed_intent['uncertain_about'] = None
-                if 'reasoning' not in parsed_intent:
-                    parsed_intent['reasoning'] = ""
-                if 'confidence' not in parsed_intent:
-                    parsed_intent['confidence'] = "medium"
-                
-                return parsed_intent
+                return json.loads(json_match.group(0))
             
             logger.warning(f"Could not parse intent JSON: {response_text}")
-            # Default to unclear if parsing fails
             return {
-                "intent_type": "unclear",
-                "entities": {
-                    "crop": None,
-                    "pest_name": None,
-                    "application_type": None
-                },
+                "intent_type": "question",
+                "entities": {},
                 "uncertain_about": None,
-                "reasoning": "Failed to parse intent",
-                "confidence": "low"
+                "reasoning": "Failed to parse"
             }
         
         except Exception as e:
-            logger.error(f"Intent detection error: {str(e)}", exc_info=True)
-            # Default to unclear on any error
+            logger.error(f"Intent detection error: {str(e)}")
             return {
-                "intent_type": "unclear",
-                "entities": {
-                    "crop": None,
-                    "pest_name": None,
-                    "application_type": None
-                },
+                "intent_type": "question",
+                "entities": {},
                 "uncertain_about": None,
-                "reasoning": f"Error: {str(e)}",
-                "confidence": "low"
+                "reasoning": f"Error: {str(e)}"
             }
     
     def format_solution_response(
@@ -389,12 +329,6 @@ class PesticideChatbot:
         if intent['intent_type'] == 'greeting':
             return self._handle_greeting()
         
-        elif intent['intent_type'] == 'farewell':
-            return self._handle_farewell()
-        
-        elif intent['intent_type'] == 'unclear':
-            return self._handle_unclear()
-        
         elif intent['intent_type'] == 'off_topic':
             return self._handle_off_topic()
         
@@ -427,49 +361,16 @@ To get started, please tell me:
 
 Example: "I have powdery mildew in grapes" """
     
-    def _handle_farewell(self) -> str:
-        """Handle farewell/acknowledgment messages"""
-        return """You're welcome! 😊
-
-Feel free to ask me anytime if you need more pesticide recommendations for your crops.
-
-Have a great day! 🌾"""
-    
-    def _handle_unclear(self) -> str:
-        """Handle unclear or ambiguous requests"""
-        return """I'm not quite sure what you're asking. Could you please be more specific? 🤔
-
-I can help you with **pesticide recommendations** for crops. For example:
-
-✓ "I have powdery mildew in grapes"
-✓ "Show solutions for rice pests"
-✓ "What pesticide for tomato blight?"
-✓ "Rice stem borer treatment"
-
-Please tell me:
-1. **Which crop** are you working with?
-2. **What pest or disease** problem do you have?
-
-Or simply describe your problem and I'll guide you! 🌾"""
-    
     def _handle_off_topic(self) -> str:
         """Handle off-topic queries"""
-        return """I specialize in **pesticide recommendations** for crop pest and disease management. 🌾
+        return """I specialize in pesticide recommendations for crops. 
 
 I can help you with:
-✓ Finding solutions for specific pests and diseases
-✓ Recommending pesticide products and dosages
-✓ Suggesting application methods
-✓ Providing waiting period information
+✓ Finding solutions for specific pests
+✓ Recommending application methods
+✓ Providing dosage information
 
-I **cannot** help with:
-✗ Fertilizers or nutrients
-✗ Weather forecasts
-✗ Market prices
-✗ General farming advice
-✗ Crop varieties
-
-Please ask about **pest or disease problems** in your crops!"""
+Please ask a question about crop pest management!"""
     
     def _handle_uncertainty(self, intent: Dict, session: SessionState) -> str:
         """Handle when user is uncertain about something"""
@@ -689,3 +590,4 @@ Keep the response concise and practical."""
         session.add_message('assistant', response)
         
         return response, session
+
