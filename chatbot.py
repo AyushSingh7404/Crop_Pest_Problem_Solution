@@ -1,5 +1,5 @@
 """
-Pesticide Recommendation Chatbot - Main Logic
+Pesticide Recommendation Chatbot - Main Logic (FIXED)
 """
 
 import os
@@ -155,98 +155,123 @@ class PesticideChatbot:
         except Exception as e:
             logger.error(f"Semantic search error: {str(e)}")
             return []
+    
+    def _validate_intent(self, intent: Dict) -> Dict:
+        """Validate and sanitize intent dictionary"""
+        if not isinstance(intent, dict):
+            logger.warning(f"Invalid intent type: {type(intent)}")
+            return {
+                "intent_type": "unclear",
+                "entities": {},
+                "uncertain_about": None,
+                "reasoning": "Invalid intent format",
+                "confidence": "low"
+            }
         
+        # Ensure required keys exist
+        if 'intent_type' not in intent:
+            intent['intent_type'] = 'unclear'
+        
+        if 'entities' not in intent or intent['entities'] is None:
+            intent['entities'] = {}
+        
+        # Ensure entities is a dict
+        if not isinstance(intent['entities'], dict):
+            intent['entities'] = {}
+        
+        return intent
+    
     def detect_intent(self, query: str, session: SessionState) -> Dict[str, Any]:
         """
         Use LLM to detect user intent with full context
         """
         system_prompt = """You are an intent classifier for a pesticide recommendation chatbot.
 
-    Classify the user's intent and extract any mentioned entities.
+Classify the user's intent and extract any mentioned entities.
 
-    Return ONLY a valid JSON object with this exact structure:
-    {
-    "intent_type": "provide_info | uncertainty | denial | confirmation | question | greeting | farewell | off_topic | unclear",
-    "entities": {
-        "crop": "extracted crop name or null",
-        "pest_name": "extracted pest/disease name or null",
-        "application_type": "extracted application method or null"
-    },
-    "uncertain_about": "crop | pest_name | application_type | null",
-    "reasoning": "brief explanation",
-    "confidence": "high | medium | low"
-    }
+Return ONLY a valid JSON object with this exact structure:
+{
+  "intent_type": "provide_info | uncertainty | denial | confirmation | question | greeting | farewell | off_topic | unclear",
+  "entities": {
+    "crop": "extracted crop name or null",
+    "pest_name": "extracted pest/disease name or null",
+    "application_type": "extracted application method or null"
+  },
+  "uncertain_about": "crop | pest_name | application_type | null",
+  "reasoning": "brief explanation",
+  "confidence": "high | medium | low"
+}
 
-    Intent Types:
-    - provide_info: User provides crop/pest/application details
-    - uncertainty: User says "don't know", "not sure", "show all", etc.
-    - denial: User says "no", "not that", etc.
-    - confirmation: User says "yes", "correct", "that's right", etc. (ONLY when genuinely confirming, NOT for acknowledgments)
-    - question: User asks a RELEVANT question about pesticides, dosage, application methods
-    - greeting: Hi, hello, how are you, etc. (initial contact)
-    - farewell: Thanks, bye, got it, that's all, ok thanks, thank you, etc. (closing/acknowledgment)
-    - off_topic: Request is clearly outside pesticide/crop domain (fertilizers, weather, prices, unrelated topics)
-    - unclear: Cannot confidently determine intent OR message is too ambiguous/vague
+Intent Types:
+- provide_info: User provides crop/pest/application details
+- uncertainty: User says "don't know", "not sure", "show all", etc.
+- denial: User says "no", "not that", etc.
+- confirmation: User says "yes", "correct", "that's right", etc. (ONLY when genuinely confirming, NOT for acknowledgments)
+- question: User asks a RELEVANT question about pesticides, dosage, application methods
+- greeting: Hi, hello, how are you, etc. (initial contact)
+- farewell: Thanks, bye, got it, that's all, ok thanks, thank you, etc. (closing/acknowledgment)
+- off_topic: Request is clearly outside pesticide/crop domain (fertilizers, weather, prices, unrelated topics)
+- unclear: Cannot confidently determine intent OR message is too ambiguous/vague
 
-    IMPORTANT: 
-    - Use "unclear" if confidence is LOW or message doesn't make sense
-    - Use "off_topic" if request is clear but NOT about pesticide recommendations
-    - Use "question" ONLY for legitimate pesticide-related questions
+IMPORTANT: 
+- Use "unclear" if confidence is LOW or message doesn't make sense
+- Use "off_topic" if request is clear but NOT about pesticide recommendations
+- Use "question" ONLY for legitimate pesticide-related questions
 
-    Examples:
+Examples:
 
-    User: "grapes powdery mildew"
-    {"intent_type": "provide_info", "entities": {"crop": "grapes", "pest_name": "powdery mildew", "application_type": null}, "uncertain_about": null, "reasoning": "user provided crop and pest", "confidence": "high"}
+User: "grapes powdery mildew"
+{"intent_type": "provide_info", "entities": {"crop": "grapes", "pest_name": "powdery mildew"}, "confidence": "high"}
 
-    User: "I don't know which pest it is"
-    {"intent_type": "uncertainty", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": "pest_name", "confidence": "high"}
+User: "I don't know which pest it is"
+{"intent_type": "uncertainty", "uncertain_about": "pest_name", "confidence": "high"}
 
-    User: "no"
-    {"intent_type": "denial", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "confidence": "medium"}
+User: "no"
+{"intent_type": "denial", "confidence": "medium"}
 
-    User: "yes, that's correct"
-    {"intent_type": "confirmation", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "confidence": "high"}
+User: "yes, that's correct"
+{"intent_type": "confirmation", "confidence": "high"}
 
-    User: "hello"
-    {"intent_type": "greeting", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "greeting message", "confidence": "high"}
+User: "hello"
+{"intent_type": "greeting", "confidence": "high"}
 
-    User: "ok thanks"
-    {"intent_type": "farewell", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "acknowledgment/closing", "confidence": "high"}
+User: "ok thanks"
+{"intent_type": "farewell", "confidence": "high"}
 
-    User: "what's the best pesticide for aphids?"
-    {"intent_type": "question", "entities": {"crop": null, "pest_name": "aphids", "application_type": null}, "uncertain_about": null, "confidence": "high"}
+User: "what's the best pesticide for aphids?"
+{"intent_type": "question", "confidence": "high"}
 
-    User: "how much does this cost?"
-    {"intent_type": "off_topic", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "pricing not in scope", "confidence": "high"}
+User: "how much does this cost?"
+{"intent_type": "off_topic", "reasoning": "pricing not in scope", "confidence": "high"}
 
-    User: "tell me about fertilizers"
-    {"intent_type": "off_topic", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "fertilizers not pesticides", "confidence": "high"}
+User: "tell me about fertilizers"
+{"intent_type": "off_topic", "reasoning": "fertilizers not pesticides", "confidence": "high"}
 
-    User: "asdfghjkl"
-    {"intent_type": "unclear", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "gibberish input", "confidence": "low"}
+User: "asdfghjkl"
+{"intent_type": "unclear", "reasoning": "gibberish input", "confidence": "low"}
 
-    User: "can you help"
-    {"intent_type": "unclear", "entities": {"crop": null, "pest_name": null, "application_type": null}, "uncertain_about": null, "reasoning": "too vague, needs clarification", "confidence": "low"}
+User: "can you help"
+{"intent_type": "unclear", "reasoning": "too vague, needs clarification", "confidence": "low"}
 
-    User: "foliar spray"
-    {"intent_type": "provide_info", "entities": {"crop": null, "pest_name": null, "application_type": "foliar spray"}, "uncertain_about": null, "confidence": "medium"}"""
+User: "foliar spray"
+{"intent_type": "provide_info", "entities": {"application_type": "foliar spray"}, "confidence": "medium"}"""
 
         history = session.get_history_for_llm(max_messages=4)
         last_bot_msg = session.get_last_bot_message()
         
         user_prompt = f"""Conversation History:
-    {history if history else 'No previous messages'}
+{history if history else 'No previous messages'}
 
-    Last Bot Message: {last_bot_msg if last_bot_msg else 'None'}
+Last Bot Message: {last_bot_msg if last_bot_msg else 'None'}
 
-    Current Session State:
-    - Crop: {session.crop or 'Unknown'}
-    - Pest: {session.pest_name or 'Unknown'}
-    - Application: {session.application_type or 'Unknown'}
+Current Session State:
+- Crop: {session.crop or 'Unknown'}
+- Pest: {session.pest_name or 'Unknown'}
+- Application: {session.application_type or 'Unknown'}
 
-    User's New Message: "{query}"
+User's New Message: "{query}"
 
-    Classify this message and extract entities. Return only the JSON object."""
+Classify this message and extract entities. Return only the JSON object."""
 
         try:
             body = json.dumps({
@@ -274,53 +299,39 @@ class PesticideChatbot:
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 parsed_intent = json.loads(json_match.group(0))
-                
-                # CRITICAL FIX: Ensure all required fields exist with defaults
+                # CRITICAL: Ensure entities key exists
                 if 'entities' not in parsed_intent:
                     parsed_intent['entities'] = {}
-                
-                # Ensure entities dict has all required keys
-                if 'crop' not in parsed_intent['entities']:
-                    parsed_intent['entities']['crop'] = None
-                if 'pest_name' not in parsed_intent['entities']:
-                    parsed_intent['entities']['pest_name'] = None
-                if 'application_type' not in parsed_intent['entities']:
-                    parsed_intent['entities']['application_type'] = None
-                
-                # Ensure other required fields exist
-                if 'uncertain_about' not in parsed_intent:
-                    parsed_intent['uncertain_about'] = None
-                if 'reasoning' not in parsed_intent:
-                    parsed_intent['reasoning'] = ""
-                if 'confidence' not in parsed_intent:
-                    parsed_intent['confidence'] = "medium"
-                
+                # Ensure entities is not None
+                if parsed_intent['entities'] is None:
+                    parsed_intent['entities'] = {}
                 return parsed_intent
             
             logger.warning(f"Could not parse intent JSON: {response_text}")
             # Default to unclear if parsing fails
             return {
                 "intent_type": "unclear",
-                "entities": {
-                    "crop": None,
-                    "pest_name": None,
-                    "application_type": None
-                },
+                "entities": {},
                 "uncertain_about": None,
                 "reasoning": "Failed to parse intent",
                 "confidence": "low"
             }
         
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            return {
+                "intent_type": "unclear",
+                "entities": {},
+                "uncertain_about": None,
+                "reasoning": "Failed to parse LLM response",
+                "confidence": "low"
+            }
         except Exception as e:
-            logger.error(f"Intent detection error: {str(e)}", exc_info=True)
+            logger.error(f"Intent detection error: {str(e)}")
             # Default to unclear on any error
             return {
                 "intent_type": "unclear",
-                "entities": {
-                    "crop": None,
-                    "pest_name": None,
-                    "application_type": None
-                },
+                "entities": {},
                 "uncertain_about": None,
                 "reasoning": f"Error: {str(e)}",
                 "confidence": "low"
@@ -383,9 +394,13 @@ class PesticideChatbot:
         
         # Step 2: Detect intent
         intent = self.detect_intent(corrected_query, session)
-        logger.info(f"Intent: {intent['intent_type']}, Entities: {intent['entities']}")
         
-        # Step 3: Route based on intent
+        # Step 3: Validate intent (SAFETY CHECK)
+        intent = self._validate_intent(intent)
+        
+        logger.info(f"Intent: {intent['intent_type']}, Entities: {intent.get('entities', {})}")
+        
+        # Step 4: Route based on intent
         if intent['intent_type'] == 'greeting':
             return self._handle_greeting()
         
@@ -537,30 +552,85 @@ Please tell me your crop name."""
     
     def _handle_provide_info(self, intent: Dict, session: SessionState) -> str:
         """Handle when user provides crop/pest/application info"""
+        # DEFENSIVE: Ensure entities exists and is a dict
         entities = intent.get('entities', {})
+        if entities is None or not isinstance(entities, dict):
+            entities = {}
         
-        # Extract and fuzzy match entities
+        # Track if crop is changing
+        crop_is_changing = False
+        new_crop = None
+        
+        # Extract and fuzzy match crop
         if entities.get('crop'):
             matched_crop = self.database.fuzzy_match_crop(entities['crop'])
             if matched_crop:
+                # Check if crop is different from current session
+                if session.crop and matched_crop != session.crop:
+                    crop_is_changing = True
+                    logger.info(f"Crop changing: {session.crop} → {matched_crop}")
+                
+                new_crop = matched_crop
                 session.crop = matched_crop
                 logger.info(f"Matched crop: {matched_crop}")
             else:
                 return f"I couldn't find '{entities['crop']}' in my database. Could you specify the crop name?"
         
-        if entities.get('pest_name') and session.crop:
-            matched_pest = self.database.fuzzy_match_pest(entities['pest_name'], session.crop)
+        # CRITICAL FIX: If crop changed and no new pest provided, reset pest
+        if crop_is_changing and not entities.get('pest_name'):
+            logger.info(f"Crop changed without new pest - resetting pest context")
+            session.pest_name = None
+            session.application_type = None
+            session.pending_question = 'awaiting_pest'
+            
+            # Ask for pest in the new crop
+            pests = self.database.get_pests(new_crop)
+            
+            if len(pests) == 0:
+                return f"No pest data available for {new_crop}."
+            
+            if len(pests) == 1:
+                # Only one option, auto-select
+                session.pest_name = pests[0]
+                return self._provide_final_solution(session)
+            
+            return f"""What pest or disease problem in **{new_crop}**?
+
+**Available options:**
+{chr(10).join([f'- {p}' for p in pests])}
+
+Or say **"not sure"** to see all solutions."""
+        
+        # Match pest (only if provided or crop didn't change)
+        if entities.get('pest_name'):
+            # If we have a crop context, fuzzy match within that crop
+            crop_for_matching = session.crop if session.crop else None
+            matched_pest = self.database.fuzzy_match_pest(entities['pest_name'], crop_for_matching)
+            
             if matched_pest:
                 session.pest_name = matched_pest
                 logger.info(f"Matched pest: {matched_pest}")
+            else:
+                # Pest not found
+                if session.crop:
+                    available_pests = self.database.get_pests(session.crop)
+                    return f"""I couldn't find '{entities['pest_name']}' for {session.crop}.
+
+**Available pests for {session.crop}:**
+{chr(10).join([f'- {p}' for p in available_pests])}
+
+Please choose from the list above."""
+                else:
+                    return f"I couldn't find pest '{entities['pest_name']}'. Could you specify the pest name?"
         
+        # Match application type
         if entities.get('application_type'):
             matched_app = self.database.fuzzy_match_application_type(entities['application_type'])
             if matched_app:
                 session.application_type = matched_app
                 logger.info(f"Matched application: {matched_app}")
         
-        # Check if we have enough info
+        # Check if we have enough info to provide solutions
         if session.is_complete():
             solutions = self.database.get_solutions(
                 session.crop, 
